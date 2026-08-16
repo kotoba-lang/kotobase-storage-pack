@@ -134,3 +134,24 @@
               {:cid cid :pack-cid pack-cid
                :file-offset frame-offset :frame-length frame-length})
             (:entries (v2/read-all bytes))))))
+
+(defn prev-of
+  "The pack this one links back to, or nil at the start of a chain.
+
+  A pack's CARv2 roots are where the link lives, and putting it there rather
+  than in a side-car is what makes the chain need nothing outside itself: a
+  reader holding one pack CID can reach every earlier pack without a
+  catalog, a manifest, or a signature.
+
+  It needs no signature for the same reason no other pointer here does —
+  every block that comes out of a pack is rehashed against the CID that was
+  asked for, so a forged or corrupted link costs a lookup that fails, never
+  an answer that is wrong."
+  [bytes]
+  (first (:roots (v2/read-all bytes))))
+
+(defn chain-step
+  "One pack of a chain, read from its own bytes: `{:entries [...] :prev cid}`."
+  [pack-cid bytes]
+  {:entries (entries-of pack-cid bytes)
+   :prev (prev-of bytes)})

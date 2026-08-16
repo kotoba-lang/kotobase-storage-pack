@@ -240,6 +240,33 @@
                          (expect false (str "the packed walk failed: "
                                             (or (some-> e .-message) e)))))))))
 
+      ;; ── the pack chain on the Promise driver ────────────────────────────
+      (.then
+       (fn [_]
+         (let [objects (async-objects)
+               store (apack/pack-block-store objects (pack/memory-catalog))
+               commits (mapv (fn [c]
+                               (mapv #(ipld/node->block {"kind" "leaf"
+                                                         "v" (+ (* c 10) %)})
+                                     (range 4)))
+                             (range 3))]
+           (-> (reduce (fn [p blocks]
+                         (.then p (fn [_] (storage/-put-blocks! store blocks))))
+                       (js/Promise.resolve nil)
+                       commits)
+               (.then (fn [_]
+                        (apack/bootstrap-catalog! objects (apack/tip-pack store))))
+               (.then
+                (fn [recovered]
+                  (expect (= 3 (count (distinct (map :pack-cid recovered))))
+                          "three commits sealed three chained packs")
+                  (expect (= (set (map :cid (apply concat commits)))
+                             (set (map :cid recovered)))
+                          "and the tip alone locates every block, with no catalog")))
+               (.catch (fn [e]
+                         (expect false (str "the chain walk failed: "
+                                            (or (some-> e .-message) e)))))))))
+
       (.then (fn [_]
                (if (zero? @failures)
                  (println "async packed block store: all green")
