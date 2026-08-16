@@ -90,9 +90,56 @@ provider including Worker builds. The CAR codec pulls `io-ipld` → `cbor` and
 `multiformats` → `@noble/hashes`. That floor is worth keeping, so the
 decorator lives one repo out.
 
+## Two drivers, one plan
+
+On a Worker every object read is a Promise, so a store that used the answer
+directly could not run on the platform this was designed for.
+
+| ns | fetch | runtime |
+|---|---|---|
+| `kotobase.storage.pack` | synchronous | JVM |
+| `kotobase.storage.pack-async` | Promise-returning | Worker, R2 |
+| `kotobase.storage.pack-plan` | — | the shared, pure half |
+
+Coalescing, the read-ahead window, the held-window cache and frame
+verification are all in `pack-plan`. Only the fetch differs, because two
+copies of a coalescing rule is two coalescing rules.
+
+The Promise path reports the same numbers as the synchronous one — 1 request
+and 12,760 bytes for the 100-link chain — which is what you would expect
+when it is the same code deciding.
+
+## End to end, on the deployment
+
+`test/r2_run.cljs` packs real CARv2 bytes, PUTs them into a real R2Bucket
+binding through [`kotobase-storage-s3`](https://github.com/kotoba-lang/kotobase-storage-s3),
+and walks the 100-link chain back out **one link at a time**:
+
+```
+ok  - 100 links walked back out of R2
+ok  - one ranged GET against the binding served all of them:
+      {:requests 1, :bytes-fetched 12760, :cache-hits 99}
+ok  - and the catalog rebuilds from the R2 object alone
+```
+
+Miniflare implements the R2 API, so the conversion this depends on — R2 takes
+an offset and a length, the contract is half-open — is judged by something
+that can disagree. The S3 adapter is a **test-only** dependency: this library
+composes over any object store, and depending on one provider would make the
+decorator a provider.
+
+## The catalog is a projection, and that is checkable
+
+A catalog that had to be consulted to locate the blocks it is stored in would
+be circular. It is not, because a pack carries a CARv2 index of its own
+contents: `rebuild-catalog!` recovers every entry — the same offsets the
+writer recorded — from the pack object alone. Deleting the catalog costs a
+scan, not the data.
+
 ```bash
-clojure -M:test                                        # 11 tests / 29 assertions
-npx nbb --classpath "$(clojure -Spath)" run-tests.cljs  # same, on SCI
+clojure -M:test        # 11 tests / 29 assertions, synchronous
+npm run test:async     # the Promise driver, same numbers
+npm run test:r2        # miniflare R2, end to end
 ```
 
 Design: root `90-docs/adr/2608160100-kotobase-physical-plane-ipld-carv2-pack.edn`.
