@@ -114,6 +114,23 @@
 
 ;; ── the port ────────────────────────────────────────────────────────────────
 
+(defn locate-row->entry
+  "One `locate-query` row as the located-entry map a pack store reads, or nil
+  when the CID is not in the catalog.
+
+  Shared by the synchronous catalog and the Promise-returning one in
+  `kotobase.storage.pack-catalog-async`, for the reason `pack-plan` is shared
+  by the two stores: two constructors that each spelled this out would be two
+  shapes the day one of them gained a field."
+  [cid row]
+  (when-let [[pack off len] row]
+    {:cid cid :pack-cid pack :file-offset off :frame-length len}))
+
+(defn entries->quads
+  "The facts for a batch of located entries."
+  [entries]
+  (into [] (mapcat entry->quads) entries))
+
 (defn datom-catalog
   "A catalog over two injected ports.
 
@@ -123,16 +140,19 @@
 
   Returns the same `{:lookup :record!}` shape `pack-block-store` already
   takes, plus `:record-pack!`, which `seal-pack!` calls when present so the
-  pack's own facts land with its blocks'."
+  pack's own facts land with its blocks'.
+
+  Both ports are SYNCHRONOUS here. A Worker's datom store is not, and
+  `pack-catalog-async/datom-catalog` is the same catalog over Promise-
+  returning ports — the store on that side already awaits both."
   [{:keys [transact! q]}]
   {:lookup
    (fn [cids]
      (reduce (fn [acc cid]
-               (if-let [[pack off len] (first (q locate-query [cid]))]
-                 (assoc acc cid {:cid cid :pack-cid pack
-                                 :file-offset off :frame-length len})
+               (if-let [entry (locate-row->entry cid (first (q locate-query [cid])))]
+                 (assoc acc cid entry)
                  acc))
              {}
              cids))
-   :record! (fn [entries] (transact! (into [] (mapcat entry->quads) entries)))
+   :record! (fn [entries] (transact! (entries->quads entries)))
    :record-pack! (fn [pack] (transact! (pack->quads pack)))})
