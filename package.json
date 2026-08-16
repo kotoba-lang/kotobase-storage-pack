@@ -2,12 +2,15 @@
   "name": "kotobase-storage-pack",
   "private": true,
   "scripts": {
-    "test:nbb": "nbb --classpath \"$(clojure -Spath)\" run-tests.cljs"
+    "test:nbb": "nbb --classpath \"$(clojure -Spath)\" run-tests.cljs",
+    "test:async": "nbb --classpath \"src:test:$(clojure -Spath)\" test/async_run.cljs",
+    "test:r2": "nbb --classpath \"src:test:$(clojure -Spath -M:r2-test)\" test/r2_run.cljs"
   },
   "dependencies": {
     "@noble/hashes": "^1.4.0"
   },
   "devDependencies": {
-    "nbb": "^1.4.208"
+    "nbb": "^1.4.208",
+    "miniflare": "^4.0.0"
   }
 }

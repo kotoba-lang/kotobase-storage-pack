@@ -43,12 +43,10 @@
             [ipld.car.v2 :as v2]
             [kotobase.storage.core :as storage]
             [kotobase.storage.object :as object]
+            [kotobase.storage.pack-plan :as plan]
             [multiformats.core :as mf]))
 
-(def default-options
-  {:window-bytes 1048576   ; read-ahead ceiling for one request
-   :max-gap-bytes 65536    ; coalesce two wanted frames across a gap this big
-   :cache-bytes 8388608})  ; total held windows before the oldest is dropped
+(def default-options plan/default-options)
 
 ;; ── catalog port ────────────────────────────────────────────────────────────
 ;;
@@ -67,63 +65,22 @@
                 (swap! state into (map (juxt :cid identity)) entries))
      :snapshot (fn [] @state)}))
 
-;; ── window cache ────────────────────────────────────────────────────────────
-
-(defn- cache-put [cache pack-cid start bytes limit]
-  (let [entry {:pack-cid pack-cid :start start :end (+ start (b/bcount bytes)) :bytes bytes}
-        held (conj (vec cache) entry)]
-    (loop [held held total (reduce + 0 (map #(b/bcount (:bytes %)) held))]
-      (if (and (> total limit) (seq (rest held)))
-        (recur (vec (rest held)) (- total (b/bcount (:bytes (first held)))))
-        held))))
-
-(defn- cache-hit
-  "A held window covering `[start, end)` of `pack-cid`, or nil."
-  [cache pack-cid start end]
-  (some (fn [e]
-          (when (and (= pack-cid (:pack-cid e))
-                     (<= (:start e) start)
-                     (<= end (:end e)))
-            e))
-        cache))
-
 ;; ── read ────────────────────────────────────────────────────────────────────
 
-(defn- runs
-  "Group located entries of ONE pack into coalesced [start end wanted] runs."
-  [located max-gap]
-  (let [sorted (sort-by :file-offset located)]
-    (reduce
-     (fn [acc {:keys [file-offset frame-length] :as e}]
-       (let [end (+ file-offset frame-length)
-             {:keys [run-end] :as last-run} (peek acc)]
-         (if (and last-run (<= (- file-offset run-end) max-gap))
-           (conj (pop acc) (-> last-run
-                               (assoc :run-end (max run-end end))
-                               (update :wanted conj e)))
-           (conj acc {:run-start file-offset :run-end end :wanted [e]}))))
-     []
-     sorted)))
-
 (defn- fetch-run!
-  "Return the bytes covering `run`, from cache or one range request.
-
-  The window extends the request forward — never backward — because the
-  chain this exists for runs forward, and extending backward would fetch what
-  the caller has already passed."
-  [{:keys [objects stats window-bytes cache-bytes cache]} pack-cid {:keys [run-start run-end]}]
-  (if-let [hit (cache-hit @cache pack-cid run-start run-end)]
+  "Bytes covering `run`, from a held window or one range request."
+  [{:keys [objects stats window-bytes cache-bytes cache]} pack-cid run]
+  (if-let [hit (plan/cache-hit @cache pack-cid (:run-start run) (:run-end run))]
     (do (swap! stats update :cache-hits inc)
         {:base (:start hit) :bytes (:bytes hit)})
-    (let [want (- run-end run-start)
-          end (max run-end (+ run-start (max want window-bytes)))
-          bytes (object/-get-object-range objects pack-cid run-start end)]
+    (let [{:keys [start end]} (plan/window-request run window-bytes)
+          bytes (object/-get-object-range objects pack-cid start end)]
       (swap! stats (fn [s] (-> s
                                (update :requests inc)
                                (update :bytes-fetched + (if bytes (b/bcount bytes) 0)))))
       (when bytes
-        (swap! cache cache-put pack-cid run-start bytes cache-bytes)
-        {:base run-start :bytes bytes}))))
+        (swap! cache plan/cache-put pack-cid start bytes cache-bytes)
+        {:base start :bytes bytes}))))
 
 (defn- read-located
   "Read every located entry, one request per coalesced run."
@@ -132,21 +89,11 @@
    (fn [acc [pack-cid es]]
      (reduce
       (fn [acc run]
-        (if-let [{:keys [base] window :bytes} (fetch-run! ctx pack-cid run)]
-          (reduce (fn [acc {:keys [file-offset frame-length]}]
-                    (let [rel (- file-offset base)]
-                      (if (or (neg? rel) (> (+ rel frame-length) (b/bcount window)))
-                        ;; The window did not cover this frame. Omitting it is
-                        ;; the contract (`-get-blocks` omits what is missing);
-                        ;; returning a truncated block would not be.
-                        acc
-                        (let [frame (v2/read-frame window rel)]
-                          (assoc acc (:cid frame) (:bytes frame))))))
-                  acc
-                  (:wanted run))
+        (if-let [{:keys [base bytes]} (fetch-run! ctx pack-cid run)]
+          (merge acc (plan/frames-from-window bytes base (:wanted run)))
           acc))
       acc
-      (runs es (:max-gap-bytes ctx))))
+      (plan/plan-runs es (:max-gap-bytes ctx))))
    {}
    (group-by :pack-cid located)))
 
