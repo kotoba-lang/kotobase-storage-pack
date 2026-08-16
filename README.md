@@ -93,9 +93,48 @@ Two questions, two owners:
 | which **pack** holds this CID | the datom-plane catalog — it has to join with commits, tenants and lake objects |
 | where **inside** that pack | the pack's own CARv2 `MultihashIndexSorted`, or the catalog's offsets |
 
-The catalog arrives here as two injected functions (`:lookup`, `:record!`), so
-this library never owns it. `memory-catalog` is the oracle and is enough for a
-single process.
+The catalog arrives here as injected functions (`:lookup`, `:record!`, and
+optionally `:record-pack!`), so this library never owns a store.
+`memory-catalog` is the oracle and is enough for a single process.
+
+`kotobase.storage.pack-catalog` is the datom-plane form: the attribute
+vocabulary, the quads, and the queries — with nothing in it that talks to a
+store, because composing over any datom engine is the same discipline as
+composing over any object store.
+
+```clojure
+(pack-catalog/datom-catalog {:transact! ... :q ...})
+```
+
+A **subject is a content address**: there is no `:block/cid` attribute,
+because the entity IS the CID. `bonsai` makes the same choice for git
+objects, for the same reason — an entity id not derived from the bytes is a
+second identity to keep in sync with the first.
+
+The point of putting it here is that it joins. One query answers where a
+block is *and* what the pack holding it is like:
+
+```clojure
+'{:find [?pack ?off ?size ?count]
+  :in [?cid]
+  :where [[?cid :block/pack ?pack]
+          [?cid :block/file-offset ?off]
+          [?pack :pack/size-bytes ?size]
+          [?pack :pack/block-count ?count]]}
+```
+
+A catalog in its own store cannot answer that, and beyond this repository the
+same join reaches the commit that wrote the pack and the tenant that owns it.
+Join reach in kotobase is exactly one ref (ADR-260726), which is why the
+catalog is not somewhere else.
+
+`:block/pack` is indexed as a **reference**, so the reverse direction —
+everything in a pack — is a direct lookup rather than a scan. That is what
+compaction and a catalog rebuild both need.
+
+The suite runs the whole read path against a real `kotoba-lang/datalog` db
+rather than the atom, because a map agrees with anything and an argument
+about joining cannot be checked by a test that never runs a query.
 
 ## Why it is not inside `kotobase-storage`
 

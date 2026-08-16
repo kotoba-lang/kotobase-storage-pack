@@ -117,7 +117,13 @@
                          entries)]
       (object/-put-object! objects pack-cid bytes)
       ((:record! catalog) recorded)
-      {:pack-cid pack-cid :size-bytes (b/bcount bytes) :entries recorded})))
+      (let [summary {:pack-cid pack-cid :size-bytes (b/bcount bytes)
+                     :entries recorded}]
+        ;; Optional on purpose: a catalog that only tracks blocks stays a
+        ;; valid catalog, and adding a required port would break every one
+        ;; that already exists.
+        (when-let [record-pack! (:record-pack! catalog)] (record-pack! summary))
+        summary))))
 
 ;; ── the store ───────────────────────────────────────────────────────────────
 
