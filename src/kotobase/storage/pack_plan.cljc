@@ -10,6 +10,27 @@
   (:require [ipld.car.bytes :as b]
             [ipld.car.v2 :as v2]))
 
+(def zero-stats
+  "The counters a store starts with, and the shape `reset-stats!` restores.
+
+  `:blocks-served` is the evidence floor. Without it `{:requests 0}` is what
+  a perfectly efficient read and a read that never happened both look like,
+  and the second is the one that happens when a catalog lookup silently
+  returns nothing. A reader that has served no blocks has not proved
+  anything about round trips, whatever the request count says — so the
+  denominator is reported next to the numerator, always."
+  {:requests 0 :bytes-fetched 0 :cache-hits 0 :blocks-served 0})
+
+(defn summarise
+  "Add the derived reading to raw counters, including the one case a caller
+  must not mistake for a good result."
+  [counters]
+  (assoc counters
+         :requests-per-block (when (pos? (:blocks-served counters))
+                               (/ (:requests counters)
+                                  (:blocks-served counters)))
+         :evidence (if (pos? (:blocks-served counters)) :served :nothing-served)))
+
 (def default-options
   {:window-bytes 1048576   ; read-ahead ceiling for one request
    :max-gap-bytes 65536    ; coalesce two wanted frames across a gap this big

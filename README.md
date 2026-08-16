@@ -53,6 +53,20 @@ the cost of 46 % more bytes. `stats` returns `:requests` and `:bytes-fetched`
 together for that reason — a round-trip claim that does not say what it
 fetched is half a claim.
 
+**And it reports a denominator.** `{:requests 0}` is what a perfectly
+efficient read and a read that never happened both look like, and the second
+is what a catalog lookup returning nothing produces. So `stats` also carries
+`:blocks-served`, the derived `:requests-per-block`, and `:evidence`, which is
+`:nothing-served` when no block was returned:
+
+```clojure
+{:requests 1 :bytes-fetched 12760 :cache-hits 99
+ :blocks-served 100 :requests-per-block 1/100 :evidence :served}
+```
+
+A ratio with no denominator is `nil` rather than zero — there is no such
+thing as a ratio of nothing.
+
 ## The honest limits
 
 - **Packing helps only where the policy put the blocks together.** Two packs

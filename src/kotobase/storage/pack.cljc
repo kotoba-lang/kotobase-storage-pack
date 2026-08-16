@@ -90,7 +90,9 @@
      (reduce
       (fn [acc run]
         (if-let [{:keys [base bytes]} (fetch-run! ctx pack-cid run)]
-          (merge acc (plan/frames-from-window bytes base (:wanted run)))
+          (let [got (plan/frames-from-window bytes base (:wanted run))]
+            (swap! (:stats ctx) update :blocks-served + (count got))
+            (merge acc got))
           acc))
       acc
       (plan/plan-runs es (:max-gap-bytes ctx))))
@@ -144,17 +146,20 @@
                       :declared (object/-object-capabilities objects)})))
    (->PackBlockStore objects catalog
                      (merge default-options options)
-                     (atom {:requests 0 :bytes-fetched 0 :cache-hits 0})
+                     (atom plan/zero-stats)
                      (atom []))))
 
 (defn stats
-  "`{:requests n :bytes-fetched n :cache-hits n}` since the last reset.
+  "Counters since the last reset, plus how to read them.
 
-  Both numbers are reported because a window trades one for the other, and a
-  claim about round trips that does not say what it fetched is half a claim."
-  [^PackBlockStore store] @(.-stats store))
+  `:requests` and `:bytes-fetched` are both reported because a window trades
+  one for the other, and a claim about round trips that does not say what it
+  fetched is half a claim. `:blocks-served` is the evidence floor:
+  `{:requests 0}` alone cannot distinguish a perfectly efficient read from
+  one that never happened, and `:evidence :nothing-served` says which."
+  [^PackBlockStore store] (plan/summarise @(.-stats store)))
 
 (defn reset-stats! [^PackBlockStore store]
-  (reset! (.-stats store) {:requests 0 :bytes-fetched 0 :cache-hits 0}))
+  (reset! (.-stats store) plan/zero-stats))
 
 (defn drop-cache! [^PackBlockStore store] (reset! (.-cache store) []))
