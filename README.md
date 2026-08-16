@@ -162,6 +162,14 @@ The Promise path reports the same numbers as the synchronous one — 1 request
 and 12,760 bytes for the 100-link chain — which is what you would expect
 when it is the same code deciding.
 
+`kotobase.storage.graphsync-replica` is the physical landing adapter for
+GraphSync checkpoint replication. A successful receipt means that a block was
+sealed into CARv2, catalogued, read back through the object/range plane with CID
+verification, and only then signed by the replica. The signature covers the
+block CID, replica identity, landing time, and pack CID. The integration test
+qualifies two distinct replica identities backed by two independent CARv2
+object stores; live multi-machine qualification remains a separate gate.
+
 ## End to end, on the deployment
 
 `test/r2_run.cljs` packs real CARv2 bytes, PUTs them into a real R2Bucket
