@@ -4,7 +4,7 @@
  ;; here rather than in it: the CAR codec pulls io-ipld -> cbor and
  ;; multiformats -> @noble/hashes, and that floor is worth keeping.
  :deps {io.github.kotoba-lang/kotobase-storage
-        {:git/sha "5260700453074aed5c899d1b56697a0fb178996e"}
+        {:git/sha "143b8da947a15a10982268ca40fff5ac20827f96"}
         io.github.kotoba-lang/io-ipld-car
         {:git/sha "4df0605506e601e428475a9277365ed147d25d12"}
         io.github.kotoba-lang/io-ipld
