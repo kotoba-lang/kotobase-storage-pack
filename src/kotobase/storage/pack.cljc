@@ -127,10 +127,16 @@
 
 ;; ── the store ───────────────────────────────────────────────────────────────
 
-(defrecord PackBlockStore [objects catalog options stats cache]
+(defrecord PackBlockStore [objects catalog options stats cache tip]
   storage/IBlockStore
   (-put-blocks! [_ blocks]
-    (seal-pack! {:objects objects :catalog catalog} blocks)
+    ;; Each pack is sealed with the previous one as its CARv2 root, so the
+    ;; packs form a chain a reader can walk from the newest backwards with
+    ;; nothing but an object store. `bootstrap-catalog!` is that walk.
+    (when-let [summary (seal-pack! {:objects objects :catalog catalog
+                                    :roots (when-let [p @tip] [p])}
+                                   blocks)]
+      (reset! tip (:pack-cid summary)))
     (mapv :cid blocks))
   (-get-blocks [_ cids]
     (let [located (vals ((:lookup catalog) (vec cids)))]
@@ -153,7 +159,8 @@
    (->PackBlockStore objects catalog
                      (merge default-options options)
                      (atom plan/zero-stats)
-                     (atom []))))
+                     (atom [])
+                     (atom (:tip-pack options)))))
 
 (defn stats
   "Counters since the last reset, plus how to read them.
@@ -169,3 +176,34 @@
   (reset! (.-stats store) plan/zero-stats))
 
 (defn drop-cache! [^PackBlockStore store] (reset! (.-cache store) []))
+
+(defn tip-pack
+  "The CID of the last pack this store sealed, or nil. This is the one value a
+  deployment has to keep outside the packs — everything else about where a
+  block lives is reachable from it."
+  [^PackBlockStore store] @(.-tip store))
+
+(defn bootstrap-catalog!
+  "Every located entry reachable from TIP-PACK-CID, newest pack first, by
+  walking the chain of packs and reading each one's own CARv2 index.
+
+  This is the catalog with the catalog taken away. Superproject
+  ADR-2608160100 calls the catalog a projection; that word is only true if
+  something can rebuild it, and until the packs were chained the only thing
+  that could was a catalog telling you which packs to look in.
+
+  `max-packs` bounds the walk. A chain is data from an untrusted store like
+  anything else here, and a cycle in it must cost a bounded number of reads
+  rather than a hang. Nothing verifies that a pack really is the predecessor
+  it claims to be, and nothing needs to: a block that comes out is rehashed
+  against the CID that was asked for, so a bad link yields fewer entries, not
+  wrong ones."
+  ([objects tip-pack-cid] (bootstrap-catalog! objects tip-pack-cid 4096))
+  ([objects tip-pack-cid max-packs]
+   (loop [cid tip-pack-cid n 0 seen #{} acc []]
+     (if (or (nil? cid) (= n max-packs) (contains? seen cid))
+       acc
+       (if-let [bytes (object/-get-object objects cid)]
+         (let [{:keys [entries prev]} (plan/chain-step cid bytes)]
+           (recur prev (inc n) (conj seen cid) (into acc entries)))
+         acc)))))

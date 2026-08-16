@@ -87,11 +87,18 @@
                            (.then (fn [_] summary)))
                        (promised summary)))))))))
 
-(defrecord AsyncPackBlockStore [objects catalog options stats cache]
+(defrecord AsyncPackBlockStore [objects catalog options stats cache tip]
   storage/IBlockStore
   (-put-blocks! [_ blocks]
-    (-> (seal-pack! {:objects objects :catalog catalog} blocks)
-        (.then (fn [_] (mapv :cid blocks)))))
+    ;; Same chain the synchronous driver writes: the previous pack is this
+    ;; one's CARv2 root, so `bootstrap-catalog!` can walk back from the tip
+    ;; with nothing but an object store.
+    (-> (seal-pack! {:objects objects :catalog catalog
+                     :roots (when-let [p @tip] [p])}
+                    blocks)
+        (.then (fn [summary]
+                 (when summary (reset! tip (:pack-cid summary)))
+                 (mapv :cid blocks)))))
   (-get-blocks [_ cids]
     (-> (promised ((:lookup catalog) (vec cids)))
         (.then (fn [located]
@@ -115,7 +122,8 @@
    (->AsyncPackBlockStore objects catalog
                           (merge plan/default-options options)
                           (atom plan/zero-stats)
-                          (atom []))))
+                          (atom [])
+                          (atom (:tip-pack options)))))
 
 (defn stats
   "Counters plus how to read them — see `kotobase.storage.pack/stats`."
@@ -136,3 +144,28 @@
   (-> (promised (object/-get-object objects pack-cid))
       (.then (fn [bytes]
                (when bytes (plan/entries-of pack-cid bytes))))))
+
+(defn tip-pack
+  "The CID of the last pack this store sealed, or nil. The one value a
+  deployment keeps outside the packs."
+  [^AsyncPackBlockStore store] @(.-tip store))
+
+(defn bootstrap-catalog!
+  "Every located entry reachable from TIP-PACK-CID, by walking the pack chain
+  and reading each pack's own CARv2 index. The catalog with the catalog taken
+  away — see the synchronous driver for why that sentence is the point.
+
+  Bounded by `max-packs`, because the chain is data from an untrusted store
+  and a cycle must cost reads rather than a hang."
+  ([objects tip-pack-cid] (bootstrap-catalog! objects tip-pack-cid 4096))
+  ([objects tip-pack-cid max-packs]
+   (letfn [(step [cid n seen acc]
+             (if (or (nil? cid) (= n max-packs) (contains? seen cid))
+               (promised acc)
+               (-> (promised (object/-get-object objects cid))
+                   (.then (fn [bytes]
+                            (if bytes
+                              (let [{:keys [entries prev]} (plan/chain-step cid bytes)]
+                                (step prev (inc n) (conj seen cid) (into acc entries)))
+                              (promised acc)))))))]
+     (step tip-pack-cid 0 #{} []))))

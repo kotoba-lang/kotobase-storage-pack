@@ -221,3 +221,74 @@
         (is (= 1/3 (:requests-per-block s))
             "one request for three blocks is the figure of merit, and it is
              only meaningful because the denominator is real")))))
+
+;; ── the pack chain, and the catalog with the catalog taken away ─────────────
+
+(deftest three-commits-are-reachable-from-the-tip-alone
+  (testing "every block of every pack, recovered by walking the chain"
+    (let [{:keys [objects store]} (fixture)
+          commits (mapv (fn [c] (mapv #(leaf (+ (* c 10) %)) (range 4))) (range 3))]
+      (doseq [blocks commits] (storage/-put-blocks! store blocks))
+      (let [tip (pack/tip-pack store)
+            recovered (pack/bootstrap-catalog! objects tip)
+            wanted (set (map :cid (apply concat commits)))]
+        (is (some? tip) "the store remembered the pack it sealed last")
+        (testing "three commits sealed three packs, all of them reached"
+          (is (= 3 (count (distinct (map :pack-cid recovered))))))
+        (is (= wanted (set (map :cid recovered)))
+            "and every block is located, with no catalog consulted")))))
+
+(deftest a-bootstrapped-catalog-can-actually-serve-the-blocks
+  ;; Locations that cannot be read are not a recovered catalog.
+  (let [{:keys [objects store]} (fixture)
+        blocks (mapv leaf (range 6))]
+    (storage/-put-blocks! store blocks)
+    (let [recovered (pack/bootstrap-catalog! objects (pack/tip-pack store))
+          fresh (pack/memory-catalog)
+          _ ((:record! fresh) recovered)
+          reader (pack/pack-block-store objects fresh)
+          got (storage/-get-blocks reader (mapv :cid blocks))]
+      (doseq [{:keys [cid bytes]} blocks]
+        (is (b/equal? bytes (get got cid))))
+      (is (= 6 (:blocks-served (pack/stats reader)))))))
+
+(deftest a-multi-pack-bootstrap-serves-every-block-it-located
+  ;; The two halves of the claim, in one test. `three-commits-...` shows the
+  ;; chain reaches every pack but compares CIDs, not bytes;
+  ;; `a-bootstrapped-catalog-can-actually-serve-...` reads real bytes but
+  ;; writes ONE commit, so it cannot tell a chained store from an unchained
+  ;; one. Measured: with chaining removed, the first fails and the second
+  ;; passes. Neither on its own says "the locations recovered by walking the
+  ;; chain are locations blocks can be read from".
+  (let [{:keys [objects store]} (fixture)
+        commits (mapv (fn [c] (mapv #(leaf (+ (* c 100) %)) (range 5))) (range 4))
+        all (apply concat commits)]
+    (doseq [blocks commits] (storage/-put-blocks! store blocks))
+    (let [recovered (pack/bootstrap-catalog! objects (pack/tip-pack store))
+          fresh (pack/memory-catalog)
+          _ ((:record! fresh) recovered)
+          reader (pack/pack-block-store objects fresh)
+          got (storage/-get-blocks reader (mapv :cid all))]
+      (is (= 4 (count (distinct (map :pack-cid recovered)))))
+      (doseq [{:keys [cid bytes]} all]
+        (is (b/equal? bytes (get got cid))
+            (str "block " cid " was located by the walk but could not be read")))
+      (is (= 20 (:blocks-served (pack/stats reader)))
+          "all twenty, across four packs, out of a catalog nobody kept"))))
+
+(deftest the-walk-is-bounded
+  ;; A pack cannot link to ITSELF -- its CID is the hash of its own bytes, so
+  ;; a self-root is not constructible. A cycle would take two packs written by
+  ;; something other than this store, which is exactly the case `seen` is for.
+  ;; What is testable here is the budget, and it is the half that bounds a
+  ;; chain that is merely very long.
+  (let [{:keys [objects store]} (fixture)]
+    (doseq [c (range 3)] (storage/-put-blocks! store (mapv #(leaf (+ (* c 10) %)) (range 2))))
+    (let [tip (pack/tip-pack store)]
+      (is (= [] (pack/bootstrap-catalog! objects tip 0))
+          "a zero budget reads nothing rather than everything")
+      (is (= 2 (count (pack/bootstrap-catalog! objects tip 1)))
+          "a budget of one reads the tip pack and stops")
+      (is (= 6 (count (pack/bootstrap-catalog! objects tip 3)))
+          "and the full budget reaches all three"))))
+
