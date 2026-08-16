@@ -5,8 +5,7 @@
   every object read is a Promise, so a store that used the answer directly
   would not run there at all. The numbers must come out the same, because
   the plan is the same code."
-  (:require [ipld.car.bytes :as b]
-            [ipld.core :as ipld]
+  (:require [ipld.core :as ipld]
             [kotobase.storage.core :as storage]
             [kotobase.storage.object :as object]
             [kotobase.storage.object-memory :as omem]

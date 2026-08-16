@@ -191,3 +191,33 @@
     (storage/-get-blocks store [(:cid (first blocks)) (:cid (last blocks))])
     (is (= 2 (:requests (pack/stats store)))
         "the frames between them are not worth dragging along")))
+
+(deftest zero-requests-is-not-evidence-of-anything
+  (testing "the counter that had to exist: {:requests 0} is what a perfectly
+            efficient read and a read that never happened both look like, and
+            the second is what a catalog lookup returning nothing produces"
+    (let [{:keys [store]} (fixture)
+          blocks (mapv leaf (range 3))]
+      (storage/-put-blocks! store blocks)
+      (pack/reset-stats! store)
+      ;; nobody asked for anything this store knows about
+      (is (= {} (storage/-get-blocks store [(:cid (leaf 999))])))
+      (let [s (pack/stats store)]
+        (is (zero? (:requests s)))
+        (is (zero? (:blocks-served s)))
+        (is (= :nothing-served (:evidence s))
+            "and it says so rather than reading as a flawless result")
+        (is (nil? (:requests-per-block s))
+            "no denominator, so no ratio -- not a ratio of zero")))
+    (let [{:keys [store]} (fixture)
+          blocks (mapv leaf (range 3))]
+      (storage/-put-blocks! store blocks)
+      (pack/drop-cache! store)
+      (pack/reset-stats! store)
+      (storage/-get-blocks store (mapv :cid blocks))
+      (let [s (pack/stats store)]
+        (is (= 3 (:blocks-served s)))
+        (is (= :served (:evidence s)))
+        (is (= 1/3 (:requests-per-block s))
+            "one request for three blocks is the figure of merit, and it is
+             only meaningful because the denominator is real")))))

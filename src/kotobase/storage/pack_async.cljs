@@ -48,9 +48,12 @@
         (.then (fn [window]
                  (read-runs ctx pack-cid (rest runs)
                             (if window
-                              (merge acc (plan/frames-from-window
-                                          (:bytes window) (:base window)
-                                          (:wanted run)))
+                              (let [got (plan/frames-from-window
+                                         (:bytes window) (:base window)
+                                         (:wanted run))]
+                                (swap! (:stats ctx) update :blocks-served
+                                       + (count got))
+                                (merge acc got))
                               acc)))))
     (promised acc)))
 
@@ -106,12 +109,14 @@
                       :declared (object/-object-capabilities objects)})))
    (->AsyncPackBlockStore objects catalog
                           (merge plan/default-options options)
-                          (atom {:requests 0 :bytes-fetched 0 :cache-hits 0})
+                          (atom plan/zero-stats)
                           (atom []))))
 
-(defn stats [^AsyncPackBlockStore store] @(.-stats store))
+(defn stats
+  "Counters plus how to read them — see `kotobase.storage.pack/stats`."
+  [^AsyncPackBlockStore store] (plan/summarise @(.-stats store)))
 (defn reset-stats! [^AsyncPackBlockStore store]
-  (reset! (.-stats store) {:requests 0 :bytes-fetched 0 :cache-hits 0}))
+  (reset! (.-stats store) plan/zero-stats))
 (defn drop-cache! [^AsyncPackBlockStore store] (reset! (.-cache store) []))
 
 (defn rebuild-catalog!
