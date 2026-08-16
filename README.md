@@ -29,12 +29,34 @@ cannot help: the caller genuinely cannot ask for the second block yet.
 Walking a 100-link chain, one `-get-blocks` per link, exactly as a hydrate
 loop must:
 
-| | requests | bytes fetched |
+| 100-link chain, walked one link at a time | requests | bytes fetched |
 |---|---|---|
-| `:window-bytes 0` (no read-ahead) | **100** | 8,730 |
-| default (1 MiB window) | **1** | 12,760 |
+| **all 100 written by ONE call** — no read-ahead | 100 | 8,730 |
+| **all 100 written by ONE call** — 1 MiB window | **1** | 12,760 |
+| **one commit per link** (what a transaction does) | **100** | — |
 
 Identical numbers on JVM and nbb. The suite prints them on every run.
+
+**Read the third row before believing the second.** The optimistic number is
+about blocks that are *co-located*, and co-location is precisely what
+packing buys. Production novelty is a cons chain where each transaction
+appends one cell pointing at the previous, so under write-locality — one
+commit, one pack — **each cell is in its own object and the walk costs one
+request per link, exactly like block-per-object**. The window extends forward
+inside one object; the predecessor is a different object entirely.
+
+So the claim that survives is narrower than "packing fixes the cons chain",
+which is how this was first motivated:
+
+> **Packing buys commit-local reads.** Twelve blocks written by one commit —
+> a transaction block, the prolly-tree pages it touched, its novelty cell —
+> are one pack and therefore one request, with no read-ahead at all.
+
+Flattening a *cross-commit* pointer chase needs something else: folding the
+novelty (which removes the chain rather than co-locating it), or compaction
+that repacks by read-locality. **Neither is designed here**, and the ADR
+deliberately refuses to design compaction before measuring — this is the
+measurement it was waiting for.
 
 **Packing alone does not buy that.** A pack store that answers each call with
 its own range request pays one round trip per link; the blocks merely happen
