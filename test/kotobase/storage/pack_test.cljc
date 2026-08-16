@@ -292,3 +292,46 @@
       (is (= 6 (count (pack/bootstrap-catalog! objects tip 3)))
           "and the full budget reaches all three"))))
 
+
+(deftest a-chain-built-one-commit-at-a-time-is-not-co-located
+  (testing "the honest counterpart to one-request-serves-a-whole-cons-chain.
+
+            Production novelty is a cons chain where each transaction appends
+            ONE cell pointing at the previous. Under write-locality -- one
+            commit, one pack -- each cell lands in its own pack, so walking
+            the chain crosses N packs and the window cannot help: it extends
+            forward inside one object, and the predecessor is a different
+            object entirely.
+
+            The optimistic measurement above puts the whole chain in one
+            -put-blocks! call. That is co-location, and co-location is what
+            packing buys. It is not what a chain built one commit at a time
+            looks like."
+    (let [chain (cons-chain 100)
+          {:keys [store objects]} (fixture)]
+      ;; one commit per link, which is what a transaction actually does
+      (doseq [blk chain] (storage/-put-blocks! store [blk]))
+      (is (= 100 (count (omem/snapshot objects))) "100 commits, 100 packs")
+      (pack/drop-cache! store)
+      (pack/reset-stats! store)
+      (let [seen (walk-chain! store (:cid (first chain)))
+            {:keys [requests cache-hits blocks-served]} (pack/stats store)]
+        (is (= (range 100) seen))
+        (is (= 100 requests)
+            "one request per link -- the same as block-per-object. Packing
+             per commit does NOT flatten a cross-commit pointer chase")
+        (is (zero? cache-hits) "and no window can span two objects")
+        (is (= 100 blocks-served))))))
+
+(deftest what-packing-actually-buys-is-commit-local-reads
+  (testing "a single commit writing several blocks -- a transaction block, the
+            prolly-tree pages it updated, its novelty cell -- is one pack and
+            therefore one request. That is the claim that survives"
+    (let [{:keys [store]} (fixture {:window-bytes 0 :cache-bytes 0})
+          one-commit (mapv leaf (range 12))]
+      (storage/-put-blocks! store one-commit)
+      (pack/drop-cache! store)
+      (pack/reset-stats! store)
+      (storage/-get-blocks store (mapv :cid one-commit))
+      (is (= 1 (:requests (pack/stats store)))
+          "12 blocks from one commit, one request, without any read-ahead"))))
