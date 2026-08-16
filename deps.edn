@@ -3,8 +3,16 @@
  ;; provider including Worker builds), which is why the pack decorator lives
  ;; here rather than in it: the CAR codec pulls io-ipld -> cbor and
  ;; multiformats -> @noble/hashes, and that floor is worth keeping.
+ ;; 1b84313, not 143b8da: at 143b8da `validate-object-store!` passed a
+ ;; computed protocol to `satisfies?`, which is an ordinary function on the
+ ;; JVM and under nbb but a compile-time macro in ClojureScript. So
+ ;; `kotobase.storage.object` did not build with the ClojureScript compiler,
+ ;; and neither did `pack-async`, which requires it. Both suites here are JVM
+ ;; or nbb, so both stayed green while the Worker driver -- the whole point of
+ ;; `pack-async` -- could not compile. See the note above `:lint` for where
+ ;; that build is actually proven, and why it is not proven here.
  :deps {io.github.kotoba-lang/kotobase-storage
-        {:git/sha "143b8da947a15a10982268ca40fff5ac20827f96"}
+        {:git/sha "1b843137fa7cf0a86f86cd052863eb233ad5d421"}
         io.github.kotoba-lang/io-ipld-car
         {:git/sha "4df0605506e601e428475a9277365ed147d25d12"}
         io.github.kotoba-lang/io-ipld
@@ -30,6 +38,22 @@
                       {:git/sha "44946328354255ad12e17d18ca9394dba066e078"}}
          :main-opts ["-m" "cognitect.test-runner"]
          :exec-fn cognitect.test-runner.api/test}
+  ;; There is deliberately no `:cljs-compile` alias here, and the reason is
+  ;; worth writing down because the obvious one does not work.
+  ;;
+  ;; `cljs.main -t node -c kotobase.storage.pack-async` fails before it ever
+  ;; reaches this library's own code: multiformats requires @noble/hashes
+  ;; through npm, and there is no node_modules in a repo that deliberately
+  ;; has no package.json. Measured 2026-08-16 -- it failed identically on
+  ;; kotobase-storage 143b8da and 1b84313, which is to say it was red for a
+  ;; reason unrelated to the bug it was added to catch. A gate that is red
+  ;; for everything answers as little as one that is green for everything,
+  ;; and shipping it would have looked like coverage.
+  ;;
+  ;; What actually compiles `pack-async` with the compiler that builds the
+  ;; Workers is a consumer that already has shadow-cljs and node_modules:
+  ;; `net-kotobase/engine` depends on this library and compiles it on every
+  ;; `npm run test:cljs`. That is where this driver's build is proven.
   :lint {:replace-deps {clj-kondo/clj-kondo {:mvn/version "2024.11.14"}}
          :main-opts ["-m" "clj-kondo.main" "--lint" "src" "test"
                      "--fail-level" "error"]}}}
