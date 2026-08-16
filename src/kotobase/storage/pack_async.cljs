@@ -78,9 +78,14 @@
                          entries)]
       (-> (promised (object/-put-object! objects pack-cid bytes))
           (.then (fn [_] (promised ((:record! catalog) recorded))))
-          (.then (fn [_] {:pack-cid pack-cid
-                          :size-bytes (b/bcount bytes)
-                          :entries recorded}))))))
+          (.then (fn [_]
+                   (let [summary {:pack-cid pack-cid
+                                  :size-bytes (b/bcount bytes)
+                                  :entries recorded}]
+                     (if-let [record-pack! (:record-pack! catalog)]
+                       (-> (promised (record-pack! summary))
+                           (.then (fn [_] summary)))
+                       (promised summary)))))))))
 
 (defrecord AsyncPackBlockStore [objects catalog options stats cache]
   storage/IBlockStore

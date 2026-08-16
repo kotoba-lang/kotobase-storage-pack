@@ -20,8 +20,14 @@
             :extra-deps {io.github.kotoba-lang/kotobase-storage-s3
                          {:git/sha "e85892327f8fb9bc444e9d006752555801fab0a0"}}}
   :test {:extra-paths ["test"]
+         ;; datalog is TEST-ONLY: the catalog ships a vocabulary, quads and
+         ;; queries, and composes over whichever datom store the caller has.
+         ;; Depending on one engine here would repeat, on the datom plane,
+         ;; the mistake this library avoids on the object plane.
          :extra-deps {io.github.cognitect-labs/test-runner
-                      {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
+                      {:git/tag "v0.5.1" :git/sha "dfb30dd"}
+                      io.github.kotoba-lang/datalog
+                      {:git/sha "44946328354255ad12e17d18ca9394dba066e078"}}
          :main-opts ["-m" "cognitect.test-runner"]
          :exec-fn cognitect.test-runner.api/test}
   :lint {:replace-deps {clj-kondo/clj-kondo {:mvn/version "2024.11.14"}}
