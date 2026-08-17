@@ -37,10 +37,26 @@
                           (fn [s] (-> s
                                       (update :requests inc)
                                       (update :bytes-fetched +
-                                              (if bytes (b/bcount bytes) 0)))))
-                   (when bytes
-                     (swap! cache plan/cache-put pack-cid start bytes cache-bytes)
-                     {:base start :bytes bytes})))))))
+                                              (if bytes (b/bcount bytes) 0))
+                                      (cond-> (nil? bytes)
+                                        (update :packs-missing inc)))))
+                   ;; `js/Promise.reject` rather than `throw`: a throw inside
+                   ;; a `.then` is intercepted by SCI under nbb and arrives
+                   ;; wrapped in a `:sci/error` whose ex-data is the
+                   ;; interpreter's, not this one's — while the same code
+                   ;; compiled by shadow-cljs for a Worker rejects with the
+                   ;; ex-info itself. Rejecting explicitly makes the failure
+                   ;; the same value on both runtimes, which is the whole
+                   ;; premise of having one driver for both.
+                   (if-let [mismatch (and bytes (plan/window-mismatch start end bytes))]
+                     (js/Promise.reject
+                      (ex-info "pack: the object store did not return the range asked for"
+                               {:type :kotobase.storage.pack/range-mismatch
+                                :mismatch mismatch :pack-cid pack-cid
+                                :asked [start end] :got-bytes (b/bcount bytes)}))
+                     (when bytes
+                       (swap! cache plan/cache-put pack-cid start bytes cache-bytes)
+                       {:base start :bytes bytes}))))))))
 
 (defn- read-runs [ctx pack-cid runs acc]
   (if-let [run (first runs)]
@@ -48,12 +64,17 @@
         (.then (fn [window]
                  (read-runs ctx pack-cid (rest runs)
                             (if window
-                              (let [got (plan/frames-from-window
-                                         (:bytes window) (:base window)
-                                         (:wanted run))]
-                                (swap! (:stats ctx) update :blocks-served
-                                       + (count got))
-                                (merge acc got))
+                              (let [{:keys [frames short]}
+                                    (plan/read-frames
+                                     (:bytes window) (:base window)
+                                     (:wanted run))]
+                                (swap! (:stats ctx)
+                                       (fn [s]
+                                         (-> s
+                                             (update :blocks-served
+                                                     + (count frames))
+                                             (update :frames-short + short))))
+                                (merge acc frames))
                               acc)))))
     (promised acc)))
 
@@ -150,22 +171,50 @@
   deployment keeps outside the packs."
   [^AsyncPackBlockStore store] @(.-tip store))
 
-(defn bootstrap-catalog!
-  "Every located entry reachable from TIP-PACK-CID, by walking the pack chain
-  and reading each pack's own CARv2 index. The catalog with the catalog taken
-  away — see the synchronous driver for why that sentence is the point.
+(defn bootstrap-report
+  "Walk the pack chain from TIP-PACK-CID and say how the walk ended.
 
-  Bounded by `max-packs`, because the chain is data from an untrusted store
-  and a cycle must cost reads rather than a hang."
-  ([objects tip-pack-cid] (bootstrap-catalog! objects tip-pack-cid 4096))
+  The Promise-returning form of `kotobase.storage.pack/bootstrap-report` —
+  see it for what `:terminated` distinguishes and why four of its five
+  values used to be indistinguishable from success. The classification
+  itself is `pack-plan/chain-stop`, shared, so the two drivers cannot decide
+  a broken chain differently."
+  ([objects tip-pack-cid] (bootstrap-report objects tip-pack-cid 4096))
   ([objects tip-pack-cid max-packs]
    (letfn [(step [cid n seen acc]
-             (if (or (nil? cid) (= n max-packs) (contains? seen cid))
-               (promised acc)
+             (if-let [stop (plan/chain-stop cid n max-packs seen)]
+               (promised (plan/bootstrap-summary acc n stop cid nil))
                (-> (promised (object/-get-object objects cid))
                    (.then (fn [bytes]
                             (if bytes
-                              (let [{:keys [entries prev]} (plan/chain-step cid bytes)]
-                                (step prev (inc n) (conj seen cid) (into acc entries)))
-                              (promised acc)))))))]
+                              (let [{:keys [entries prev problem]}
+                                    (plan/chain-step cid bytes)]
+                                (if problem
+                                  (promised (plan/bootstrap-summary
+                                             acc n :unreadable-pack cid problem))
+                                  (step prev (inc n) (conj seen cid)
+                                        (into acc entries))))
+                              (promised (plan/bootstrap-summary
+                                         acc n :missing-pack cid nil))))))))]
      (step tip-pack-cid 0 #{} []))))
+
+(defn bootstrap-catalog!
+  "Every located entry reachable from TIP-PACK-CID, or a rejected Promise.
+
+  The entries-only form, which rejects exactly where a bare vector would be
+  a lie — see `kotobase.storage.pack/bootstrap-catalog!`. The recovered
+  entries travel in the ex-data rather than being thrown away."
+  ([objects tip-pack-cid] (bootstrap-catalog! objects tip-pack-cid 4096))
+  ([objects tip-pack-cid max-packs]
+   (-> (bootstrap-report objects tip-pack-cid max-packs)
+       (.then (fn [{:keys [entries terminated] :as report}]
+                (if (contains? plan/entries-only-terminations terminated)
+                  entries
+                  ;; rejected, not thrown — see `fetch-run!` for why the
+                  ;; distinction is not cosmetic here.
+                  (js/Promise.reject
+                   (ex-info (str "pack: the chain walk stopped at "
+                                 (name terminated)
+                                 " — what it recovered is a fragment, not a catalog")
+                            (assoc report
+                                   :type :kotobase.storage.pack/incomplete-chain)))))))))
