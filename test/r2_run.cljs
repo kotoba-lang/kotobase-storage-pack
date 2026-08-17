@@ -14,6 +14,7 @@
   (:require ["miniflare" :refer [Miniflare]]
             [ipld.core :as ipld]
             [kotobase.storage.core :as storage]
+            [kotobase.storage.object :as object]
             [kotobase.storage.object-s3 :as objs3]
             [kotobase.storage.pack :as pack]
             [kotobase.storage.pack-async :as apack]
@@ -75,6 +76,31 @@
                        (.then (fn [recovered]
                                 (expect (= 100 (count recovered))
                                         "and the catalog rebuilds from the R2 object alone")))))))
+        ;; ── the drill, against the real binding ────────────────────────────
+        ;;
+        ;; The in-memory drill proves the store SAYS the right thing when the
+        ;; object is gone. This proves the saying survives contact with a
+        ;; provider: R2 answers a missing key with null, and the whole
+        ;; difference between "no such object" and "a catalog that knew
+        ;; nothing" is one counter that has to be incremented on this path
+        ;; too. Measured before it was: {:requests 1, :blocks-served 0,
+        ;; :evidence :nothing-served} -- indistinguishable from an empty
+        ;; catalog, over a bucket that had lost the data.
+        (.then (fn [_]
+                 (let [pack-cid (:pack-cid (first (vals ((:snapshot catalog)))))]
+                   (-> (js/Promise.resolve (object/-delete-object! objects pack-cid))
+                       (.then (fn [_]
+                                (apack/drop-cache! store)
+                                (apack/reset-stats! store)
+                                (storage/-get-blocks store [(:cid (first chain))])))
+                       (.then (fn [got]
+                                (let [s (apack/stats store)]
+                                  (expect (= {} got)
+                                          "with the pack deleted from R2, no block comes back")
+                                  (expect (= 1 (:packs-missing s))
+                                          (str "and the absent object is counted: " (pr-str s)))
+                                  (expect (= :degraded (:evidence s))
+                                          "so the read reads as degraded, not as an empty catalog"))))))))
         (.catch (fn [e]
                   (js/console.error (str "FAIL: " (.-message e) " "
                                          (pr-str (ex-data e))))

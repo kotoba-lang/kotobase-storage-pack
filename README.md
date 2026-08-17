@@ -219,10 +219,75 @@ contents: `rebuild-catalog!` recovers every entry — the same offsets the
 writer recorded — from the pack object alone. Deleting the catalog costs a
 scan, not the data.
 
+## And it is checkable in the other direction too
+
+`rebuild-catalog!` says what a pack holds. What it could not say, until the
+drill went looking, is whether the walk that produced it *finished*.
+
+Measured on 2026-08-17, with a three-pack chain and its middle object
+deleted, `bootstrap-catalog!` returned the tip pack's three entries — which
+is exactly what a healthy one-pack store returns. Delete the tip instead and
+it returned `[]`, which is also what a zero budget returns, and also what an
+empty store returns. Four states, two values, no way to tell them apart.
+
+So the walk now reports how it ended, and there are five ways:
+
+```clojure
+(pack/bootstrap-report objects tip)
+;; {:entries [...] :packs 3 :terminated :chain-start :complete? true}
+;; {:entries [...] :packs 1 :terminated :missing-pack   :stopped-at "bafk…"}
+;; {:entries [...] :packs 2 :terminated :unreadable-pack :problem {:error "car: uint64 in file exceeds…"}}
+;; {:entries [...] :packs 4096 :terminated :budget-exhausted}
+;; {:entries [...] :terminated :cycle}
+```
+
+`bootstrap-catalog!` is the entries-only form, and it now **throws** for the
+three that are real failures rather than handing back a fragment shaped like
+a catalog — the recovered entries ride along in the ex-data, so refusing to
+return them as a catalog loses nothing. A budget the caller set still
+returns normally: only the caller knows whether it meant to stop there.
+
+A corrupt pack also no longer takes the walk down with it. It used to throw
+from the middle, discarding every pack already recovered and naming none of
+them; now the packs before it survive, and the report says which one failed
+and what the codec said about it.
+
+## The recovery drill
+
+`test/kotobase/storage/pack_recovery_test.cljc` breaks the object store in
+the four ways the design has to survive, on both drivers and against a real
+R2 binding. Every one of them was quiet or misdirected before it was run:
+
+| broken | before | now |
+|---|---|---|
+| pack missing mid-chain | 3 entries, no signal | `:terminated :missing-pack`, `:stopped-at` |
+| pack missing on a read | `{:requests 1 :evidence :nothing-served}` | `:packs-missing 1`, `:evidence :degraded` |
+| index will not parse | threw, losing 2 readable packs | `:unreadable-pack` + `:problem`, 2 packs kept |
+| object ends early | frames omitted, counters healthy | `:frames-short 2`, `:evidence :degraded` |
+| store ignores `Range` | `car: unsupported CID version {:version 13217}` | `:range-mismatch :range-ignored` |
+| catalog points at another frame | that block returned under its own CID | `:frame-misplaced` |
+
+The last two are the ones worth reading twice. A provider that answers HTTP
+200 where 206 was asked for returns bytes that are perfectly good and simply
+are not the bytes requested, so every offset computed from them is wrong —
+and the error blamed the pack. The check is certain rather than clever: a
+CARv2 data region starts at byte 51, so no frame is ever at offset 0, and a
+response beginning with the pragma at a non-zero start *is* the whole object.
+
+`:evidence :degraded` is the reading that had to exist next to `:served`. A
+read that returned 99 of 100 blocks because one pack was truncated is not a
+99-block success; its request count is not a measurement of anything.
+
+**The line the drill draws**: bytes we did not get are omitted and counted;
+bytes we did get that are wrong throw. That is why a tampered frame fails
+closed while a truncated object degrades — the store does not trust the
+object store, it trusts the hashes.
+
 ```bash
-clojure -M:test        # 11 tests / 29 assertions, synchronous
+clojure -M:test        # 35 tests / 157 assertions, synchronous
+npm run test:nbb       # the same cljc suite on nbb
 npm run test:async     # the Promise driver, same numbers
-npm run test:r2        # miniflare R2, end to end
+npm run test:r2        # miniflare R2, end to end, including the drill
 ```
 
 Design: root `90-docs/adr/2608160100-kotobase-physical-plane-ipld-carv2-pack.edn`.

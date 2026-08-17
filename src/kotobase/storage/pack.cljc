@@ -77,8 +77,14 @@
           bytes (object/-get-object-range objects pack-cid start end)]
       (swap! stats (fn [s] (-> s
                                (update :requests inc)
-                               (update :bytes-fetched + (if bytes (b/bcount bytes) 0)))))
+                               (update :bytes-fetched + (if bytes (b/bcount bytes) 0))
+                               (cond-> (nil? bytes) (update :packs-missing inc)))))
       (when bytes
+        (when-let [mismatch (plan/window-mismatch start end bytes)]
+          (throw (ex-info "pack: the object store did not return the range asked for"
+                          {:type :kotobase.storage.pack/range-mismatch
+                           :mismatch mismatch :pack-cid pack-cid
+                           :asked [start end] :got-bytes (b/bcount bytes)})))
         (swap! cache plan/cache-put pack-cid start bytes cache-bytes)
         {:base start :bytes bytes}))))
 
@@ -90,9 +96,11 @@
      (reduce
       (fn [acc run]
         (if-let [{:keys [base bytes]} (fetch-run! ctx pack-cid run)]
-          (let [got (plan/frames-from-window bytes base (:wanted run))]
-            (swap! (:stats ctx) update :blocks-served + (count got))
-            (merge acc got))
+          (let [{:keys [frames short]} (plan/read-frames bytes base (:wanted run))]
+            (swap! (:stats ctx) (fn [s] (-> s
+                                            (update :blocks-served + (count frames))
+                                            (update :frames-short + short))))
+            (merge acc frames))
           acc))
       acc
       (plan/plan-runs es (:max-gap-bytes ctx))))
@@ -183,27 +191,71 @@
   block lives is reachable from it."
   [^PackBlockStore store] @(.-tip store))
 
-(defn bootstrap-catalog!
-  "Every located entry reachable from TIP-PACK-CID, newest pack first, by
-  walking the chain of packs and reading each one's own CARv2 index.
+(defn bootstrap-report
+  "Walk the pack chain from TIP-PACK-CID and say how the walk ended.
+
+  ```clojure
+  {:entries [...] :packs 3 :terminated :chain-start
+   :stopped-at nil :complete? true :problem nil}
+  ```
 
   This is the catalog with the catalog taken away. Superproject
   ADR-2608160100 calls the catalog a projection; that word is only true if
   something can rebuild it, and until the packs were chained the only thing
   that could was a catalog telling you which packs to look in.
 
-  `max-packs` bounds the walk. A chain is data from an untrusted store like
-  anything else here, and a cycle in it must cost a bounded number of reads
-  rather than a hang. Nothing verifies that a pack really is the predecessor
-  it claims to be, and nothing needs to: a block that comes out is rehashed
-  against the CID that was asked for, so a bad link yields fewer entries, not
-  wrong ones."
-  ([objects tip-pack-cid] (bootstrap-catalog! objects tip-pack-cid 4096))
+  `:terminated` exists because the walk has five ways to stop and, until it
+  was measured, four of them returned the same value as success. With a
+  three-pack chain whose middle object was deleted, the walk returned the
+  tip pack's three entries — which is exactly what a healthy one-pack store
+  returns. With the tip gone it returned `[]`, which is also what a budget
+  of zero returns, and also what an empty store returns.
+
+  - `:chain-start` — the oldest pack has no predecessor. The only complete
+    walk, and the only one `:complete?` is true for.
+  - `:budget-exhausted` — `max-packs` ran out. The chain is longer.
+  - `:missing-pack` — the object store does not have the pack `:stopped-at`.
+  - `:unreadable-pack` — it has it and it will not parse; `:problem` says
+    what the codec said, and the entries from every earlier pack survive.
+  - `:cycle` — a pack already visited. A pack cannot link to itself (its CID
+    is the hash of its own bytes), so this takes packs written by something
+    other than this store — which is the case the bound is for.
+
+  Nothing verifies that a pack really is the predecessor it claims to be,
+  and nothing needs to: a block that comes out is rehashed against the CID
+  that was asked for, so a bad link yields fewer entries, not wrong ones."
+  ([objects tip-pack-cid] (bootstrap-report objects tip-pack-cid 4096))
   ([objects tip-pack-cid max-packs]
    (loop [cid tip-pack-cid n 0 seen #{} acc []]
-     (if (or (nil? cid) (= n max-packs) (contains? seen cid))
-       acc
+     (if-let [stop (plan/chain-stop cid n max-packs seen)]
+       (plan/bootstrap-summary acc n stop cid nil)
        (if-let [bytes (object/-get-object objects cid)]
-         (let [{:keys [entries prev]} (plan/chain-step cid bytes)]
-           (recur prev (inc n) (conj seen cid) (into acc entries)))
-         acc)))))
+         (let [{:keys [entries prev problem]} (plan/chain-step cid bytes)]
+           (if problem
+             (plan/bootstrap-summary acc n :unreadable-pack cid problem)
+             (recur prev (inc n) (conj seen cid) (into acc entries))))
+         (plan/bootstrap-summary acc n :missing-pack cid nil))))))
+
+(defn bootstrap-catalog!
+  "Every located entry reachable from TIP-PACK-CID, or a throw.
+
+  The entries-only form of `bootstrap-report`, and it throws precisely where
+  a bare vector would be a lie: a fragment of a chain has the same shape as
+  a whole one, so a caller that got `[...]` back could not tell a recovered
+  catalog from a recovery that stopped at a hole. `:type` is
+  `:kotobase.storage.pack/incomplete-chain` and the whole report — recovered
+  entries included — is the ex-data, so nothing is lost by refusing to
+  return it as a catalog.
+
+  `max-packs` bounds the walk, and a budget the caller set is the one
+  incomplete walk this returns normally: only the caller knows whether it
+  meant to stop there."
+  ([objects tip-pack-cid] (bootstrap-catalog! objects tip-pack-cid 4096))
+  ([objects tip-pack-cid max-packs]
+   (let [{:keys [entries terminated] :as report}
+         (bootstrap-report objects tip-pack-cid max-packs)]
+     (if (contains? plan/entries-only-terminations terminated)
+       entries
+       (throw (ex-info (str "pack: the chain walk stopped at " (name terminated)
+                            " — what it recovered is a fragment, not a catalog")
+                       (assoc report :type :kotobase.storage.pack/incomplete-chain)))))))

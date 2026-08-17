@@ -267,6 +267,59 @@
                          (expect false (str "the chain walk failed: "
                                             (or (some-> e .-message) e)))))))))
 
+      ;; ── the recovery drill, and that both drivers judge it the same ─────
+      ;;
+      ;; The synchronous suite proves what a hole in the chain does. What
+      ;; this proves is that the Promise driver says the SAME word about it.
+      ;; Two walks that each classify a broken chain their own way is the
+      ;; failure `pack-plan` exists to prevent, and it is invisible until
+      ;; something breaks -- which is exactly when the two answers matter.
+      (.then
+       (fn [_]
+         (let [inner (omem/memory-object-store)
+               objects (->AsyncObjects inner)
+               store (apack/pack-block-store objects (pack/memory-catalog))
+               commits (mapv (fn [c]
+                               (mapv #(ipld/node->block {"kind" "leaf"
+                                                         "v" (+ (* c 20) %)})
+                                     (range 3)))
+                             (range 3))]
+           (-> (reduce (fn [p blocks]
+                         (.then p (fn [_] (storage/-put-blocks! store blocks))))
+                       (js/Promise.resolve nil)
+                       commits)
+               (.then (fn [_] (apack/bootstrap-report objects (apack/tip-pack store))))
+               (.then
+                (fn [{:keys [entries complete? terminated]}]
+                  (expect (and complete? (= :chain-start terminated))
+                          "an intact chain terminates at :chain-start")
+                  (let [tip (apack/tip-pack store)
+                        middle (second (distinct (map :pack-cid entries)))]
+                    ;; delete through the inner store: the async wrapper is
+                    ;; the store under test, not a fixture to mutate.
+                    (object/-delete-object! inner middle)
+                    (-> (apack/bootstrap-report objects tip)
+                        (.then (fn [report]
+                                 (expect (= :missing-pack (:terminated report))
+                                         "and a hole terminates at :missing-pack, the same word the synchronous driver uses")
+                                 (expect (false? (:complete? report))
+                                         "not complete")
+                                 (expect (= middle (:stopped-at report))
+                                         "naming the pack that is gone")
+                                 (expect (= 3 (count (:entries report)))
+                                         "keeping the tip pack's entries, which alone look exactly like a healthy one-pack store")))
+                        (.then (fn [_]
+                                 (-> (apack/bootstrap-catalog! objects tip)
+                                     (.then (fn [_]
+                                              (expect false "bootstrap-catalog! returned a fragment as a catalog")))
+                                     (.catch (fn [e]
+                                               (expect (= :kotobase.storage.pack/incomplete-chain
+                                                          (:type (ex-data e)))
+                                                       "and the entries-only form rejects rather than returning it"))))))))))
+               (.catch (fn [e]
+                         (expect false (str "the async drill failed: "
+                                            (or (some-> e .-message) e)))))))))
+
       (.then (fn [_]
                (if (zero? @failures)
                  (println "async packed block store: all green")
