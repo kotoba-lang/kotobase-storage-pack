@@ -9,7 +9,15 @@
             ;; reads the message off the object rather than through
             ;; `ex-message`, so a recovery path that works on the JVM and not
             ;; here is exactly the bug a cljc file can hide.
-            [kotobase.storage.pack-recovery-test]))
+            [kotobase.storage.pack-recovery-test]
+            ;; The catalog suite requires `datalog`, which lives in the :test
+            ;; alias -- so this runner's classpath has to be `-M:test` for it
+            ;; to load at all. It was absent here from the start, and JVM
+            ;; `clojure -M:test` picks up every namespace by directory scan, so
+            ;; it passed there and simply never ran on cljs. Found 2026-08-18
+            ;; by `verify-cljs-runner-completeness`, a detector that had itself
+            ;; never been executed.
+            [kotobase.storage.pack-catalog-test]))
 
 (defmethod t/report [:cljs.test/default :end-run-tests] [m]
   (println (str "\nnbb: " (:test m) " tests, " (:pass m) " passed, "
@@ -18,4 +26,5 @@
     (set! (.-exitCode js/process) 1)))
 
 (t/run-tests 'kotobase.storage.pack-test
-             'kotobase.storage.pack-recovery-test)
+             'kotobase.storage.pack-recovery-test
+             'kotobase.storage.pack-catalog-test)
