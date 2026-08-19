@@ -178,18 +178,18 @@
   fetched is half a claim. `:blocks-served` is the evidence floor:
   `{:requests 0}` alone cannot distinguish a perfectly efficient read from
   one that never happened, and `:evidence :nothing-served` says which."
-  [^PackBlockStore store] (plan/summarise @(.-stats store)))
+  [store] (plan/summarise @(:stats store)))
 
-(defn reset-stats! [^PackBlockStore store]
-  (reset! (.-stats store) plan/zero-stats))
+(defn reset-stats! [store]
+  (reset! (:stats store) plan/zero-stats))
 
-(defn drop-cache! [^PackBlockStore store] (reset! (.-cache store) []))
+(defn drop-cache! [store] (reset! (:cache store) []))
 
 (defn tip-pack
   "The CID of the last pack this store sealed, or nil. This is the one value a
   deployment has to keep outside the packs — everything else about where a
   block lives is reachable from it."
-  [^PackBlockStore store] @(.-tip store))
+  [store] @(:tip store))
 
 (defn bootstrap-report
   "Walk the pack chain from TIP-PACK-CID and say how the walk ended.

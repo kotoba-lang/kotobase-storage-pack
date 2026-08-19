@@ -12,7 +12,7 @@
  ;; `pack-async` -- could not compile. See the note above `:lint` for where
  ;; that build is actually proven, and why it is not proven here.
  :deps {io.github.kotoba-lang/kotobase-storage
-        {:git/sha "1b843137fa7cf0a86f86cd052863eb233ad5d421"}
+        {:git/sha "e52ddaad020e7d9f790a1839cf77e69f97ff731e"}
         io.github.kotoba-lang/io-ipld-car
         {:git/sha "4df0605506e601e428475a9277365ed147d25d12"}
         io.github.kotoba-lang/io-ipld
