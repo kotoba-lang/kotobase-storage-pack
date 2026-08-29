@@ -6,9 +6,7 @@
     "test:async": "nbb --classpath \"src:test:$(clojure -Spath -M:test)\" test/async_run.cljs",
     "test:r2": "nbb --classpath \"src:test:$(clojure -Spath -M:r2-test)\" test/r2_run.cljs"
   },
-  "dependencies": {
-    "@noble/hashes": "2.0.1"
-  },
+  "dependencies": {},
   "devDependencies": {
     "nbb": "^1.4.208",
     "miniflare": "^4.0.0"
