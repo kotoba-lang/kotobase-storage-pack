@@ -16,9 +16,9 @@
         io.github.kotoba-lang/io-ipld-car
         {:git/sha "4df0605506e601e428475a9277365ed147d25d12"}
         io.github.kotoba-lang/io-ipld
-        {:git/sha "8bc2dde5ae47129e49a957131c40313b6b02731c"}
+        {:git/sha "48ba40490cf082a1473986ac757b8e2b214a3d1b"}
         io.github.kotoba-lang/io-multiformats
-        {:git/sha "b3b157e683a943d4f2e9362d9366cceefff3f656"}}
+        {:git/sha "561fe7dfada3db852b127f06d41750dabd3cead9"}}
  :aliases
  {;; The S3/R2 adapter is TEST-ONLY and deliberately not a dependency: this
   ;; library composes over any object store, and depending on one provider
