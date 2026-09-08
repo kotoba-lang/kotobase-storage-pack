@@ -19,7 +19,7 @@
   objects — a blob's subject IS its own hash — and it is right for the same
   reason: an entity id that is not derived from the bytes is a second
   identity to keep in sync with the first."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (def schema
   "The attribute vocabulary. Data, not a schema installation: the datom
