@@ -11,7 +11,12 @@
  ;; or nbb, so both stayed green while the Worker driver -- the whole point of
  ;; `pack-async` -- could not compile. See the note above `:lint` for where
  ;; that build is actually proven, and why it is not proven here.
- :deps {io.github.kotoba-lang/kotobase-storage
+ :deps {
+        ;; kotoba.lang.text, not clojure.string. Pinned as an explicit floor:
+        ;; tools.deps takes the NEWEST sha it is shown, so without a floor here
+        ;; this repo silently rides whatever a sibling happens to name.
+        io.github.kotoba-lang/text {:git/sha "73bdb13ae7a3d004b44bca08be03a3191157a38f"}
+       io.github.kotoba-lang/kotobase-storage
         {:git/sha "e52ddaad020e7d9f790a1839cf77e69f97ff731e"}
         io.github.kotoba-lang/io-ipld-car
         {:git/sha "4df0605506e601e428475a9277365ed147d25d12"}
