@@ -1,7 +1,7 @@
 (ns run-tests
   "The pack suite on nbb — the runtime the Worker read path resembles.
 
-     nbb --classpath \"$(clojure -Spath)\" run-tests.cljs"
+     nbb --classpath \"$(clojure -Spath)\" run-tests.cljk"
   (:require [cljs.test :as t]
             [kotobase.storage.pack-test]
             ;; The drill runs here too, not only on the JVM. `chain-step`
