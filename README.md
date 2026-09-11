@@ -284,7 +284,7 @@ closed while a truncated object degrades — the store does not trust the
 object store, it trusts the hashes.
 
 ```bash
-clojure -M:test        # 35 tests / 157 assertions, synchronous
+kbb -M:test        # 35 tests / 157 assertions, synchronous
 npm run test:nbb       # the same cljc suite on nbb
 npm run test:async     # the Promise driver, same numbers
 npm run test:r2        # miniflare R2, end to end, including the drill
