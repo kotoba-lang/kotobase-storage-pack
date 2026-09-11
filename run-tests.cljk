@@ -1,7 +1,7 @@
 (ns run-tests
   "The pack suite on nbb — the runtime the Worker read path resembles.
 
-     nbb --classpath \"$(clojure -Spath)\" run-tests.cljk"
+     kbb --backend sci --classpath \"$(kbb -Spath)\" run-tests.cljk"
   (:require [cljs.test :as t]
             [kotobase.storage.pack-test]
             ;; The drill runs here too, not only on the JVM. `chain-step`
@@ -13,7 +13,7 @@
             ;; The catalog suite requires `datalog`, which lives in the :test
             ;; alias -- so this runner's classpath has to be `-M:test` for it
             ;; to load at all. It was absent here from the start, and JVM
-            ;; `clojure -M:test` picks up every namespace by directory scan, so
+            ;; `kbb -M:test` picks up every namespace by directory scan, so
             ;; it passed there and simply never ran on cljs. Found 2026-08-18
             ;; by `verify-cljs-runner-completeness`, a detector that had itself
             ;; never been executed.

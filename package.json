@@ -2,9 +2,9 @@
   "name": "kotobase-storage-pack",
   "private": true,
   "scripts": {
-    "test:nbb": "nbb --classpath \"$(clojure -Spath -M:test)\" run-tests.cljk",
-    "test:async": "nbb --classpath \"src:test:$(clojure -Spath -M:test)\" test/async_run.cljk",
-    "test:r2": "nbb --classpath \"src:test:$(clojure -Spath -M:r2-test)\" test/r2_run.cljk"
+    "test:nbb": "kbb --backend sci --classpath \"$(kbb -Spath -M:test)\" run-tests.cljk",
+    "test:async": "kbb --backend sci --classpath \"src:test:$(kbb -Spath -M:test)\" test/async_run.cljk",
+    "test:r2": "kbb --backend sci --classpath \"src:test:$(kbb -Spath -M:r2-test)\" test/r2_run.cljk"
   },
   "dependencies": {},
   "devDependencies": {
