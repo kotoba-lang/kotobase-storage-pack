@@ -194,7 +194,7 @@ object stores; live multi-machine qualification remains a separate gate.
 
 ## End to end, on the deployment
 
-`test/r2_run.cljs` packs real CARv2 bytes, PUTs them into a real R2Bucket
+`test/r2_run.cljk` packs real CARv2 bytes, PUTs them into a real R2Bucket
 binding through [`kotobase-storage-s3`](https://github.com/kotoba-lang/kotobase-storage-s3),
 and walks the 100-link chain back out **one link at a time**:
 
@@ -254,7 +254,7 @@ and what the codec said about it.
 
 ## The recovery drill
 
-`test/kotobase/storage/pack_recovery_test.cljc` breaks the object store in
+`test/kotobase/storage/pack_recovery_test.cljk` breaks the object store in
 the four ways the design has to survive, on both drivers and against a real
 R2 binding. Every one of them was quiet or misdirected before it was run:
 
