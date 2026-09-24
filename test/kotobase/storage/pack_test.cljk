@@ -1,5 +1,5 @@
 (ns kotobase.storage.pack-test
-  (:require #?(:clj [clojure.test :refer [deftest is testing]]
+  (:require #?(:clj [kotoba.test :refer [deftest is testing]]
                :cljs [cljs.test :refer [deftest is testing]])
             [ipld.car.bytes :as b]
             [ipld.core :as ipld]
