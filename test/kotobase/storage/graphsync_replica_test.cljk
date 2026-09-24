@@ -1,5 +1,5 @@
 (ns kotobase.storage.graphsync-replica-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [ed25519.core :as ed]
             [ipld.core :as ipld]
             [kotoba.p2p.graphsync-replication :as replication]

@@ -10,7 +10,7 @@
   `kotoba-lang/datalog` is the engine here and it is a TEST-ONLY dependency:
   the library ships the vocabulary, the quads and the queries, and composes
   over whichever datom store the caller already has."
-  (:require #?(:clj [clojure.test :refer [deftest is testing]]
+  (:require #?(:clj [kotoba.test :refer [deftest is testing]]
                :cljs [cljs.test :refer [deftest is testing]])
             [datalog.core :as d]
             [datalog.index :as index]
